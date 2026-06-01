@@ -1,0 +1,30 @@
+{
+  "name": "@langchain/langsmith-pi-extension",
+  "version": "0.0.1",
+  "description": "LangSmith extension for Pi Coding Agent",
+  "keywords": [
+    "coding-agent",
+    "langsmith",
+    "pi",
+    "pi-package"
+  ],
+  "license": "MIT",
+  "author": "LangChain",
+  "type": "module",
+  "scripts": {},
+  "dependencies": {
+    "langsmith": "^0.6.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "^0.72.1",
+    "@mariozechner/pi-coding-agent": "^0.72.1",
+    "@types/node": "^25.6.0",
+    "oxfmt": "^0.47.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
