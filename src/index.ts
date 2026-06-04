@@ -1,7 +1,8 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Client, RunTree } from "langsmith";
 
 import { type Config, getConfig } from "./config";
+import { isRecord } from "../test/utils/types";
 
 const EXTENSION_NAME = "langsmith-pi-extension";
 const STATUS_KEY = "langsmith";
@@ -9,67 +10,151 @@ const STATUS_KEY = "langsmith";
 const PARENT_DOTTED_ORDER_ENV = "LANGSMITH_PI_PARENT_DOTTED_ORDER";
 const PARENT_BAGGAGE_ENV = "LANGSMITH_PI_PARENT_BAGGAGE";
 
-interface ActiveTrace {
+interface PendingLlmRun {
+  name: string;
+  payload: AssumedPayload;
+  metadata: Record<string, unknown>;
+  providerResponses: Array<{ status: number; headers: Record<string, string> }>;
+}
+
+interface TraceContext {
   root: RunTree;
   turns: Map<number, RunTree>;
+
   currentTurn?: RunTree;
   currentLlm?: RunTree;
+  pendingLlm?: PendingLlmRun;
+  deferNextLlmToNextTurn: boolean;
+
   tools: Map<string, RunTree>;
   envRestores: Map<string, { dottedOrder?: string; baggage?: string }>;
-  posted: WeakSet<RunTree>;
-  ended: WeakSet<RunTree>;
 }
 
-type ReplicaConfig = NonNullable<Config["replicas"]>[number];
+interface AssumedPayload {
+  input: Array<Record<string, unknown>>;
+  tools: Array<Record<string, unknown>>;
+}
 
-function clientConfig(config: Config): ConstructorParameters<typeof Client>[0] {
+type AgentMessage = ContextEvent["messages"][number];
+
+type ExtractMessage<Role extends string> = AgentMessage extends infer T
+  ? T extends { role: Role }
+    ? T
+    : never
+  : never;
+
+const isMessage = <Role extends string>(
+  message: AgentMessage,
+  role: Role,
+): message is ExtractMessage<Role> => {
+  return message.role === role;
+};
+
+const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | undefined => {
+  if (!isMessage(message, "assistant")) return undefined;
+
+  const usage = message.usage;
+
   return {
-    ...(config.api_key ? { apiKey: config.api_key } : {}),
-    ...(config.api_url ? { apiUrl: config.api_url } : {}),
+    input_tokens: usage?.input,
+    input_cost: usage?.cost?.input,
+
+    output_tokens: usage?.output,
+    output_cost: usage?.cost?.output,
+
+    total_tokens: usage?.totalTokens,
+    total_cost: usage?.cost?.total,
+
+    input_token_details: {
+      cache_read: usage.cacheRead,
+      cache_creation: usage.cacheWrite,
+    },
   };
+};
+
+const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] => {
+  return messages.map((message) => {
+    let { role, content, ...rest } = message as unknown as Record<string, unknown>;
+
+    if (message.role === "toolResult") {
+      role = "tool";
+    }
+
+    if (message.role === "assistant") {
+      content = message.content.map((part) => {
+        if (part.type === "toolCall") {
+          const { arguments: args, type: _, ...rest } = part;
+          return { type: "tool_call", args, ...rest };
+        }
+
+        return part;
+      });
+    }
+
+    return { role, content, ...rest };
+  });
+};
+
+const convertPayloadMessages = (payload: unknown): Record<string, unknown>[] | null => {
+  if (!Array.isArray(payload)) return null;
+
+  return payload.flatMap<Record<string, unknown>>((maybeItem) => {
+    if (!isRecord(maybeItem)) return [];
+    if (maybeItem.role === "user" && Array.isArray(maybeItem.content)) {
+      const { role, content, ...rest } = maybeItem;
+      return {
+        role,
+        content: maybeItem.content.map((maybePart) => {
+          if (!isRecord(maybePart)) return maybePart;
+
+          if (maybePart.type === "input_text") {
+            const { type: _, ...restPart } = maybePart;
+            return { type: "text", ...restPart };
+          }
+
+          return maybePart;
+        }),
+        ...rest,
+      };
+    }
+
+    return maybeItem;
+  });
+};
+
+async function startLlmRun(
+  trace: TraceContext,
+  parent: RunTree,
+  pending: PendingLlmRun,
+): Promise<RunTree> {
+  const { input, tools, ...rest } = pending.payload;
+
+  const llm = parent.createChild({
+    name: pending.name,
+    run_type: "llm",
+    inputs: { messages: convertPayloadMessages(input), tools, ...rest },
+    metadata: pending.metadata,
+  });
+
+  trace.currentLlm = llm;
+  await safePost(llm);
+  return llm;
 }
 
-function runReplicas(config: Config):
-  | Array<{
-      apiUrl?: string;
-      apiKey?: string;
-      projectName?: string;
-      updates?: Record<string, unknown>;
-    }>
-  | undefined {
-  if (!config.replicas?.length) return undefined;
-  return config.replicas.map((replica: ReplicaConfig) => ({
-    ...(replica.api_url ? { apiUrl: replica.api_url } : {}),
-    ...(replica.api_key ? { apiKey: replica.api_key } : {}),
-    ...(replica.project ? { projectName: replica.project } : {}),
-    ...(replica.updates ? { updates: replica.updates } : {}),
-  }));
-}
-
-function modelName(ctxModel: unknown): string | undefined {
-  const model = ctxModel as { provider?: string; id?: string; name?: string } | undefined;
-  if (!model) return undefined;
-  return [model.provider, model.id ?? model.name].filter(Boolean).join("/") || undefined;
-}
-
-async function safePost(trace: ActiveTrace, run: RunTree): Promise<void> {
-  if (trace.posted.has(run)) return;
-  trace.posted.add(run);
+async function safePost(run: RunTree): Promise<void> {
   await run.postRun();
 }
 
 async function safeEnd(
-  trace: ActiveTrace,
   run: RunTree | undefined,
-  outputs?: Record<string, unknown>,
-  error?: string,
-  metadata?: Record<string, unknown>,
+  params: {
+    outputs?: Record<string, unknown>;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  },
 ): Promise<void> {
-  if (!run || trace.ended.has(run)) return;
-  trace.ended.add(run);
-
-  await run.end(outputs, error, undefined, metadata);
-  await run.patchRun();
+  await run?.end(params.outputs, params.error, undefined, params.metadata);
+  await run?.patchRun();
 }
 
 function isPiSubagentChild(): boolean {
@@ -118,14 +203,19 @@ function createRootRun(
       ...subagentMetadata(),
     },
     tags: ["pi", "coding-agent", ...(isPiSubagentChild() ? ["pi-subagent"] : [])],
-    replicas: runReplicas(extensionConfig),
+    replicas: extensionConfig.replicas?.map((replica) => ({
+      ...(replica.api_url ? { apiUrl: replica.api_url } : {}),
+      ...(replica.api_key ? { apiKey: replica.api_key } : {}),
+      ...(replica.project ? { projectName: replica.project } : {}),
+      ...(replica.updates ? { updates: replica.updates } : {}),
+    })),
   };
 
   const parentRun = parentRunFromEnv(client);
   return parentRun ? parentRun.createChild(config) : new RunTree(config);
 }
 
-function setTraceParentEnv(trace: ActiveTrace, toolCallId: string, run: RunTree): void {
+function setTraceParentEnv(trace: TraceContext, toolCallId: string, run: RunTree): void {
   const headers = run.toHeaders();
   trace.envRestores.set(toolCallId, {
     dottedOrder: process.env[PARENT_DOTTED_ORDER_ENV],
@@ -135,7 +225,7 @@ function setTraceParentEnv(trace: ActiveTrace, toolCallId: string, run: RunTree)
   process.env[PARENT_BAGGAGE_ENV] = headers.baggage;
 }
 
-function restoreTraceParentEnv(trace: ActiveTrace, toolCallId: string): void {
+function restoreTraceParentEnv(trace: TraceContext, toolCallId: string): void {
   const previous = trace.envRestores.get(toolCallId);
   if (!previous) return;
   trace.envRestores.delete(toolCallId);
@@ -145,11 +235,15 @@ function restoreTraceParentEnv(trace: ActiveTrace, toolCallId: string): void {
   else process.env[PARENT_BAGGAGE_ENV] = previous.baggage;
 }
 
-export default async function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI, options?: { client?: Client }) {
   const config = await getConfig();
   const enabled = config.enabled;
-  const client = enabled ? new Client(clientConfig(config)) : undefined;
-  let active: ActiveTrace | undefined;
+
+  const client = enabled
+    ? (options?.client ?? new Client({ apiKey: config.api_key, apiUrl: config.api_url }))
+    : undefined;
+
+  let active: TraceContext | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
     if (enabled) {
@@ -170,26 +264,22 @@ export default async function (pi: ExtensionAPI) {
   });
 
   if (!enabled || !client) return;
-
   pi.on("before_agent_start", async (event, ctx) => {
     if (active) {
-      await safeEnd(
-        active,
-        active.root,
-        { interruptedByNextRun: true },
-        "Trace replaced by a new Pi run",
-      );
+      await safeEnd(active.root, {
+        outputs: { interruptedByNextRun: true },
+        error: "Trace replaced by a new Pi run",
+      });
     }
 
     active = {
       root: createRootRun(client, config, event.prompt, event.images?.length ?? 0, ctx.cwd),
       turns: new Map(),
+      deferNextLlmToNextTurn: false,
       tools: new Map(),
       envRestores: new Map(),
-      posted: new WeakSet(),
-      ended: new WeakSet(),
     };
-    await safePost(active, active.root);
+    await safePost(active.root);
     ctx.ui.setStatus(STATUS_KEY, "LangSmith: tracing run");
   });
 
@@ -199,32 +289,46 @@ export default async function (pi: ExtensionAPI) {
       name: `Pi turn ${event.turnIndex}`,
       run_type: "chain",
       inputs: { turnIndex: event.turnIndex },
-      metadata: { model: modelName(ctx.model), timestamp: event.timestamp },
+      metadata: {
+        ls_provider: ctx.model?.provider,
+        ls_model_name: ctx.model?.name?.toLocaleLowerCase(),
+        timestamp: event.timestamp,
+      },
     });
     active.turns.set(event.turnIndex, turn);
     active.currentTurn = turn;
-    await safePost(active, turn);
+    active.deferNextLlmToNextTurn = false;
+    await safePost(turn);
+
+    if (active.pendingLlm) {
+      const pending = active.pendingLlm;
+      active.pendingLlm = undefined;
+      await startLlmRun(active, turn, pending);
+    }
   });
 
   pi.on("before_provider_request", async (event, ctx) => {
     if (!active) return;
-    const parent = active.currentTurn ?? active.root;
-    const llm = parent.createChild({
-      name: modelName(ctx.model) ?? "provider request",
-      run_type: "llm",
-      inputs: { payload: event.payload },
-      metadata: { model: modelName(ctx.model) },
-    });
-    active.currentLlm = llm;
-    await safePost(active, llm);
+    const pending = {
+      name: ctx.model?.provider ?? ctx.model?.name?.toLocaleLowerCase() ?? "provider request",
+      payload: event.payload as AssumedPayload,
+      metadata: {
+        ls_provider: ctx.model?.provider,
+        ls_model_name: ctx.model?.name?.toLocaleLowerCase(),
+      },
+      providerResponses: [],
+    };
+
+    if (active.deferNextLlmToNextTurn) {
+      active.pendingLlm = pending;
+      return;
+    }
+
+    await startLlmRun(active, active.currentTurn ?? active.root, pending);
   });
 
   pi.on("after_provider_response", async (event) => {
-    if (!active?.currentLlm) return;
-    active.currentLlm.addEvent({
-      name: "provider_response",
-      kwargs: { status: event.status, headers: event.headers },
-    });
+    active?.pendingLlm?.providerResponses.push({ status: event.status, headers: event.headers });
   });
 
   pi.on("message_end", async (event) => {
@@ -233,11 +337,17 @@ export default async function (pi: ExtensionAPI) {
       event.message.stopReason === "error"
         ? (event.message.errorMessage ?? "Assistant message ended with stopReason=error")
         : undefined;
-    await safeEnd(active, active.currentLlm, { message: event.message }, error, {
-      stopReason: event.message.stopReason,
-      usage: event.message.usage,
+
+    await safeEnd(active.currentLlm, {
+      outputs: { messages: convertMessages([event.message]) },
+      error,
+      metadata: {
+        stop_reason: event.message.stopReason,
+        usage_metadata: extractUsageMetadata(event.message),
+      },
     });
     active.currentLlm = undefined;
+    active.deferNextLlmToNextTurn = true;
   });
 
   pi.on("tool_execution_start", async (event) => {
@@ -250,87 +360,99 @@ export default async function (pi: ExtensionAPI) {
       metadata: { toolName: event.toolName, toolCallId: event.toolCallId },
     });
     active.tools.set(event.toolCallId, tool);
-    if (event.toolName === "subagent") {
-      setTraceParentEnv(active, event.toolCallId, tool);
-    }
-    await safePost(active, tool);
+    if (event.toolName === "subagent") setTraceParentEnv(active, event.toolCallId, tool);
+    await safePost(tool);
   });
 
   pi.on("tool_execution_update", async (event) => {
     const tool = active?.tools.get(event.toolCallId);
-    if (!tool) return;
-    tool.addEvent({
-      name: "tool_update",
-      kwargs: { partialResult: event.partialResult },
-    });
+    if (!tool || !active) return;
+
+    tool.addEvent({ name: "tool_update", kwargs: { partialResult: event.partialResult } });
   });
 
   pi.on("tool_execution_end", async (event) => {
-    if (!active) return;
-    const tool = active.tools.get(event.toolCallId);
-    if (!tool) return;
+    const tool = active?.tools.get(event.toolCallId);
+    if (!tool || !active) return;
+
     active.tools.delete(event.toolCallId);
     restoreTraceParentEnv(active, event.toolCallId);
-    await safeEnd(
-      active,
-      tool,
-      { result: event.result },
-      event.isError ? "Tool execution failed" : undefined,
-      { isError: event.isError },
-    );
+    await safeEnd(tool, {
+      outputs: { result: event.result },
+      error: event.isError ? "Tool execution failed" : undefined,
+      metadata: { isError: event.isError },
+    });
   });
 
   pi.on("turn_end", async (event) => {
     if (!active) return;
     const turn = active.turns.get(event.turnIndex) ?? active.currentTurn;
-    await safeEnd(active, active.currentLlm, { message: event.message });
+
+    await safeEnd(active.currentLlm, {
+      outputs: { messages: convertMessages([event.message]) },
+      metadata: {
+        usage_metadata: extractUsageMetadata(event.message),
+      },
+    });
     active.currentLlm = undefined;
-    await safeEnd(active, turn, {
-      message: event.message,
-      toolResults: event.toolResults,
+
+    await safeEnd(turn, {
+      outputs: { messages: convertMessages([event.message]), toolResults: event.toolResults },
     });
     if (turn === active.currentTurn) active.currentTurn = undefined;
   });
 
   pi.on("agent_end", async (event, ctx) => {
     if (!active) return;
+
     for (const tool of active.tools.values()) {
-      await safeEnd(active, tool, undefined, "Pi run ended before tool_execution_end");
+      await safeEnd(tool, { error: "Pi run ended before tool_execution_end" });
     }
     active.tools.clear();
+
     for (const toolCallId of [...active.envRestores.keys()]) {
       restoreTraceParentEnv(active, toolCallId);
     }
-    await safeEnd(
-      active,
-      active.currentLlm,
-      undefined,
-      "Pi run ended before LLM message finalized",
-    );
+    if (active.pendingLlm) {
+      const pending = active.pendingLlm;
+      active.pendingLlm = undefined;
+      await startLlmRun(active, active.currentTurn ?? active.root, pending);
+    }
+    await safeEnd(active.currentLlm, {
+      error: "Pi run ended before LLM message finalized",
+    });
     for (const turn of active.turns.values()) {
-      await safeEnd(active, turn, { incomplete: true });
+      await safeEnd(turn, { outputs: { incomplete: true } });
     }
 
     const root = active.root;
-    await safeEnd(active, root, {
-      messages: event.messages,
-      contextUsage: ctx.getContextUsage(),
+    await safeEnd(root, {
+      outputs: { messages: convertMessages(event.messages), context_usage: ctx.getContextUsage() },
     });
+
     active = undefined;
     ctx.ui.setStatus(STATUS_KEY, "LangSmith: traced");
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
     if (active) {
-      await safeEnd(
-        active,
-        active.root,
-        { shutdown: true },
-        "Pi session shut down before run completed",
-      );
+      if (active.pendingLlm) {
+        const pending = active.pendingLlm;
+        active.pendingLlm = undefined;
+        await startLlmRun(active, active.currentTurn ?? active.root, pending);
+      }
+      await safeEnd(active.currentLlm, {
+        error: "Pi session shut down before LLM message finalized",
+      });
+      await safeEnd(active.root, {
+        outputs: { shutdown: true },
+        error: "Pi session shut down before run completed",
+      });
+
       for (const toolCallId of [...active.envRestores.keys()]) {
         restoreTraceParentEnv(active, toolCallId);
       }
+
       active = undefined;
     }
     await client.awaitPendingTraceBatches();
