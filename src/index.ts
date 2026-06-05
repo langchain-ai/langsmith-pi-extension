@@ -7,9 +7,6 @@ import { isRecord } from "./types";
 const EXTENSION_NAME = "langsmith-pi-extension";
 const STATUS_KEY = "langsmith";
 
-const PARENT_DOTTED_ORDER_ENV = "LANGSMITH_PI_PARENT_DOTTED_ORDER";
-const PARENT_BAGGAGE_ENV = "LANGSMITH_PI_PARENT_BAGGAGE";
-
 interface PendingLlmRun {
   name: string;
   payload: unknown;
@@ -26,7 +23,6 @@ interface TraceContext {
   deferNextLlmToNextTurn: boolean;
 
   tools: Map<string, RunTree>;
-  envRestores: Map<string, { dottedOrder?: string; baggage?: string }>;
 }
 
 type AgentMessage = ContextEvent["messages"][number];
@@ -80,7 +76,44 @@ const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | 
   };
 };
 
-const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] => {
+const MULTIMODAL_PART_TYPES = new Set(["image"]);
+
+// Pi represents binary content (e.g. images read by the `read` tool, or attached
+// by the user) as { type, mimeType, data }. The LangSmith UI does not recognize
+// that shape and renders the raw base64 as text. Convert it to the LangChain v1
+// multimodal content block ({ type, mime_type, base64 }) which the UI renders
+// inline. Anything that is not a recognized multimodal part passes through
+// untouched. Provider request payloads are left alone — they already arrive in
+// provider-native format (Anthropic source.base64 / OpenAI image_url) that the
+// UI handles.
+export const normalizeContentPart = (part: unknown): unknown => {
+  if (!isRecord(part)) return part;
+  if (typeof part.type !== "string" || !MULTIMODAL_PART_TYPES.has(part.type)) return part;
+  if (typeof part.mimeType !== "string" || typeof part.data !== "string") return part;
+
+  const { mimeType, data, ...rest } = part;
+  return { ...rest, mime_type: mimeType, base64: data };
+};
+
+const normalizeContent = (content: unknown): unknown => {
+  if (!Array.isArray(content)) return content;
+  return content.map(convertContentPart);
+};
+
+// Single per-part converter applied to every message role.
+// assistant tool calls become LangSmith `tool_call` parts
+// multimodal parts are normalized for inline rendering
+// everything else passes through.
+const convertContentPart = (part: unknown): unknown => {
+  if (isRecord(part) && part.type === "toolCall") {
+    const { arguments: args, type: _, ...rest } = part;
+    return { type: "tool_call", args, ...rest };
+  }
+
+  return normalizeContentPart(part);
+};
+
+export const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] => {
   return messages.map((message) => {
     let { role, content, ...rest } = message as unknown as Record<string, unknown>;
 
@@ -88,24 +121,21 @@ const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] =>
       role = "tool";
     }
 
-    if (message.role === "assistant") {
-      content = message.content.map((part) => {
-        if (part.type === "toolCall") {
-          const { arguments: args, type: _, ...rest } = part;
-          return { type: "tool_call", args, ...rest };
-        }
-
-        return part;
-      });
-    }
+    content = normalizeContent(content);
 
     return { role, content, ...rest };
   });
 };
 
-const convertToolOutputs = (outputs: { result: unknown }) => {
+export const convertToolOutputs = (outputs: { result: unknown }) => {
   if (isRecord(outputs.result) && outputs.result.content != null) {
-    return { output: { role: "tool", ...outputs.result } };
+    return {
+      output: {
+        role: "tool",
+        ...outputs.result,
+        content: normalizeContent(outputs.result.content),
+      },
+    };
   }
 
   return { output: outputs.result };
@@ -205,30 +235,6 @@ async function safeEnd(
   await run?.patchRun();
 }
 
-function isPiSubagentChild(): boolean {
-  return process.env.PI_SUBAGENT_CHILD === "1";
-}
-
-function subagentMetadata(): Record<string, unknown> {
-  if (!isPiSubagentChild()) return {};
-  return {
-    piSubagent: true,
-    subagentRunId: process.env.PI_SUBAGENT_RUN_ID,
-    subagentAgent: process.env.PI_SUBAGENT_CHILD_AGENT,
-    subagentIndex: process.env.PI_SUBAGENT_CHILD_INDEX,
-    subagentDepth: process.env.PI_SUBAGENT_DEPTH,
-  };
-}
-
-function parentRunFromEnv(client: Client): RunTree | undefined {
-  const dottedOrder = process.env[PARENT_DOTTED_ORDER_ENV];
-  if (!dottedOrder) return undefined;
-  return RunTree.fromHeaders(
-    { "langsmith-trace": dottedOrder, baggage: process.env[PARENT_BAGGAGE_ENV] ?? "" },
-    { client },
-  );
-}
-
 function createRootRun(
   client: Client,
   extensionConfig: Config,
@@ -237,9 +243,7 @@ function createRootRun(
   cwd: string,
 ): RunTree {
   const config = {
-    name: isPiSubagentChild()
-      ? `Pi subagent run${process.env.PI_SUBAGENT_CHILD_AGENT ? `: ${process.env.PI_SUBAGENT_CHILD_AGENT}` : ""}`
-      : "Pi agent run",
+    name: "Pi agent run",
     run_type: "chain",
     project_name: extensionConfig.project,
     client,
@@ -248,9 +252,8 @@ function createRootRun(
       ls_integration: EXTENSION_NAME,
       cwd,
       ...extensionConfig.metadata,
-      ...subagentMetadata(),
     },
-    tags: ["pi", "coding-agent", ...(isPiSubagentChild() ? ["pi-subagent"] : [])],
+    tags: ["pi", "coding-agent"],
     replicas: extensionConfig.replicas?.map((replica) => ({
       ...(replica.api_url ? { apiUrl: replica.api_url } : {}),
       ...(replica.api_key ? { apiKey: replica.api_key } : {}),
@@ -259,28 +262,7 @@ function createRootRun(
     })),
   };
 
-  const parentRun = parentRunFromEnv(client);
-  return parentRun ? parentRun.createChild(config) : new RunTree(config);
-}
-
-function setTraceParentEnv(trace: TraceContext, toolCallId: string, run: RunTree): void {
-  const headers = run.toHeaders();
-  trace.envRestores.set(toolCallId, {
-    dottedOrder: process.env[PARENT_DOTTED_ORDER_ENV],
-    baggage: process.env[PARENT_BAGGAGE_ENV],
-  });
-  process.env[PARENT_DOTTED_ORDER_ENV] = headers["langsmith-trace"];
-  process.env[PARENT_BAGGAGE_ENV] = headers.baggage;
-}
-
-function restoreTraceParentEnv(trace: TraceContext, toolCallId: string): void {
-  const previous = trace.envRestores.get(toolCallId);
-  if (!previous) return;
-  trace.envRestores.delete(toolCallId);
-  if (previous.dottedOrder === undefined) delete process.env[PARENT_DOTTED_ORDER_ENV];
-  else process.env[PARENT_DOTTED_ORDER_ENV] = previous.dottedOrder;
-  if (previous.baggage === undefined) delete process.env[PARENT_BAGGAGE_ENV];
-  else process.env[PARENT_BAGGAGE_ENV] = previous.baggage;
+  return new RunTree(config);
 }
 
 export default async function (pi: ExtensionAPI, options?: { client?: Client }) {
@@ -325,7 +307,6 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
       turns: new Map(),
       deferNextLlmToNextTurn: false,
       tools: new Map(),
-      envRestores: new Map(),
     };
     await safePost(active.root);
     ctx.ui.setStatus(STATUS_KEY, "LangSmith: tracing run");
@@ -404,7 +385,6 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
       metadata: { toolName: event.toolName, toolCallId: event.toolCallId },
     });
     active.tools.set(event.toolCallId, tool);
-    if (event.toolName === "subagent") setTraceParentEnv(active, event.toolCallId, tool);
     await safePost(tool);
   });
 
@@ -420,7 +400,6 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
     if (!tool || !active) return;
 
     active.tools.delete(event.toolCallId);
-    restoreTraceParentEnv(active, event.toolCallId);
 
     await safeEnd(tool, {
       outputs: convertToolOutputs(event),
@@ -452,9 +431,6 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
     }
     active.tools.clear();
 
-    for (const toolCallId of [...active.envRestores.keys()]) {
-      restoreTraceParentEnv(active, toolCallId);
-    }
     if (active.pendingLlm) {
       const pending = active.pendingLlm;
       active.pendingLlm = undefined;
@@ -490,10 +466,6 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
         outputs: { shutdown: true },
         error: "Pi session shut down before run completed",
       });
-
-      for (const toolCallId of [...active.envRestores.keys()]) {
-        restoreTraceParentEnv(active, toolCallId);
-      }
 
       active = undefined;
     }
