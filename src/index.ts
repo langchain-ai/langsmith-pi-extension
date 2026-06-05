@@ -76,7 +76,7 @@ const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | 
   };
 };
 
-const MULTIMODAL_PART_TYPES = new Set(["image", "audio", "file", "video"]);
+const MULTIMODAL_PART_TYPES = new Set(["image"]);
 
 // Pi represents binary content (e.g. images read by the `read` tool, or attached
 // by the user) as { type, mimeType, data }. The LangSmith UI does not recognize

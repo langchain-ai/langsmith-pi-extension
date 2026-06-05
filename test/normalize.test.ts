@@ -10,14 +10,6 @@ describe("normalizeContentPart", () => {
     expect(normalizeContentPart(piImage)).toEqual(lcImage);
   });
 
-  it("converts other multimodal kinds (audio/file/video) the same way", () => {
-    expect(normalizeContentPart({ type: "audio", mimeType: "audio/mp3", data: "AAA" })).toEqual({
-      type: "audio",
-      mime_type: "audio/mp3",
-      base64: "AAA",
-    });
-  });
-
   it("passes text parts through unchanged", () => {
     const text = { type: "text", text: "hello" };
     expect(normalizeContentPart(text)).toBe(text);
