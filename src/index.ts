@@ -12,7 +12,7 @@ const PARENT_BAGGAGE_ENV = "LANGSMITH_PI_PARENT_BAGGAGE";
 
 interface PendingLlmRun {
   name: string;
-  payload: AssumedPayload;
+  payload: unknown;
   metadata: Record<string, unknown>;
 }
 
@@ -28,11 +28,6 @@ interface TraceContext {
   tools: Map<string, RunTree>;
   envRestores: Map<string, { dottedOrder?: string; baggage?: string }>;
 }
-
-type AssumedPayload = {
-  input: Array<Record<string, unknown>>;
-  tools: Array<Record<string, unknown>>;
-};
 
 type AgentMessage = ContextEvent["messages"][number];
 
@@ -64,11 +59,11 @@ const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | 
 
   const usage = message.usage;
   return {
-    input_tokens: safeAdd(usage?.input, usage?.cacheRead),
-    input_cost: safeAdd(usage?.cost?.input, usage?.cost?.cacheRead),
+    input_tokens: safeAdd(usage?.input, usage?.cacheRead, usage?.cacheWrite),
+    input_cost: safeAdd(usage?.cost?.input, usage?.cost?.cacheRead, usage?.cost?.cacheWrite),
 
-    output_tokens: safeAdd(usage?.output, usage?.cacheWrite),
-    output_cost: safeAdd(usage?.cost?.output, usage?.cost?.cacheWrite),
+    output_tokens: usage?.output,
+    output_cost: usage?.cost?.output,
 
     total_tokens: usage?.totalTokens,
     total_cost: usage?.cost?.total,
@@ -108,35 +103,73 @@ const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] =>
   });
 };
 
-const convertPayloadMessages = (payload: unknown): Record<string, unknown>[] | null => {
-  if (!Array.isArray(payload)) return null;
+const convertToolOutputs = (outputs: { result: unknown }) => {
+  if (isRecord(outputs.result) && outputs.result.content != null) {
+    return { output: { role: "tool", ...outputs.result } };
+  }
 
-  return payload.flatMap<Record<string, unknown>>((maybeItem) => {
-    if (!isRecord(maybeItem)) return [];
-    if (maybeItem.role === "user" && Array.isArray(maybeItem.content)) {
-      const { role, content, ...rest } = maybeItem;
-      return {
-        role,
-        content: maybeItem.content.map((maybePart) => {
-          if (!isRecord(maybePart)) return maybePart;
-
-          if (maybePart.type === "input_text") {
-            const { type: _, ...restPart } = maybePart;
-            return { type: "text", ...restPart };
-          }
-
-          return maybePart;
-        }),
-        ...rest,
-      };
-    }
-
-    return maybeItem;
-  });
+  return { output: outputs.result };
 };
 
-const convertToolOutputs = (outputs: { result: unknown }) => {
-  return { output: outputs.result };
+const convertProviderPayload = (payload: unknown) => {
+  if (!isRecord(payload)) return { payload };
+
+  if (Array.isArray(payload.input) && payload.messages == null) {
+    const { input, ...rest } = payload;
+    return {
+      messages: input.flatMap<Record<string, unknown>>((maybe) => {
+        if (!isRecord(maybe)) return maybe;
+
+        if (maybe.role === "user" && Array.isArray(maybe.content)) {
+          const { role, content, ...rest } = maybe;
+          return {
+            role,
+            content: maybe.content.map((maybePart) => {
+              if (!isRecord(maybePart)) return maybePart;
+
+              if (maybePart.type === "input_text") {
+                const { type: _, ...restPart } = maybePart;
+                return { type: "text", ...restPart };
+              }
+
+              return maybePart;
+            }),
+            ...rest,
+          };
+        }
+
+        return maybe;
+      }),
+      ...rest,
+    };
+  }
+
+  if (Array.isArray(payload.messages)) {
+    const { messages, ...rest } = payload;
+    return {
+      messages: messages.flatMap((maybe) => {
+        if (!isRecord(maybe)) return maybe;
+
+        if (Array.isArray(maybe.content)) {
+          // Anthropic: Mislabeled tool messages as user messages
+          if (
+            maybe.role === "user" &&
+            maybe.content.length === 1 &&
+            maybe.content.every((part) => isRecord(part) && part.type === "tool_result")
+          ) {
+            const [{ type: __, ...restPart }] = maybe.content;
+            const { role: _, ...rest } = maybe;
+            return { role: "tool", ...rest, ...restPart };
+          }
+        }
+
+        return maybe;
+      }),
+      ...rest,
+    };
+  }
+
+  return payload;
 };
 
 async function startLlmRun(
@@ -144,12 +177,10 @@ async function startLlmRun(
   parent: RunTree,
   pending: PendingLlmRun,
 ): Promise<RunTree> {
-  const { input, tools, ...rest } = pending.payload;
-
   const llm = parent.createChild({
     name: pending.name,
     run_type: "llm",
-    inputs: { messages: convertPayloadMessages(input), tools, ...rest },
+    inputs: convertProviderPayload(pending.payload),
     metadata: pending.metadata,
   });
 
@@ -328,7 +359,7 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
     if (!active) return;
     const pending = {
       name: ctx.model?.provider ?? ctx.model?.name?.toLocaleLowerCase() ?? "provider request",
-      payload: event.payload as AssumedPayload,
+      payload: event.payload,
       metadata: {
         ls_provider: ctx.model?.provider,
         ls_model_name: ctx.model?.name?.toLocaleLowerCase(),
