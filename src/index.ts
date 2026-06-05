@@ -80,7 +80,31 @@ const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | 
   };
 };
 
-const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] => {
+const MULTIMODAL_PART_TYPES = new Set(["image", "audio", "file", "video"]);
+
+// Pi represents binary content (e.g. images read by the `read` tool, or attached
+// by the user) as { type, mimeType, data }. The LangSmith UI does not recognize
+// that shape and renders the raw base64 as text. Convert it to the LangChain v1
+// multimodal content block ({ type, mime_type, base64 }) which the UI renders
+// inline. Anything that is not a recognized multimodal part passes through
+// untouched. Provider request payloads are left alone — they already arrive in
+// provider-native format (Anthropic source.base64 / OpenAI image_url) that the
+// UI handles.
+export const normalizeContentPart = (part: unknown): unknown => {
+  if (!isRecord(part)) return part;
+  if (typeof part.type !== "string" || !MULTIMODAL_PART_TYPES.has(part.type)) return part;
+  if (typeof part.mimeType !== "string" || typeof part.data !== "string") return part;
+
+  const { mimeType, data, ...rest } = part;
+  return { ...rest, mime_type: mimeType, base64: data };
+};
+
+const normalizeContent = (content: unknown): unknown => {
+  if (!Array.isArray(content)) return content;
+  return content.map(normalizeContentPart);
+};
+
+export const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] => {
   return messages.map((message) => {
     let { role, content, ...rest } = message as unknown as Record<string, unknown>;
 
@@ -89,6 +113,7 @@ const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] =>
     }
 
     if (message.role === "assistant") {
+      // Assistant content is text/thinking/toolCall only — never multimodal.
       content = message.content.map((part) => {
         if (part.type === "toolCall") {
           const { arguments: args, type: _, ...rest } = part;
@@ -97,15 +122,24 @@ const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] =>
 
         return part;
       });
+    } else {
+      // user and toolResult content may carry image parts.
+      content = normalizeContent(content);
     }
 
     return { role, content, ...rest };
   });
 };
 
-const convertToolOutputs = (outputs: { result: unknown }) => {
+export const convertToolOutputs = (outputs: { result: unknown }) => {
   if (isRecord(outputs.result) && outputs.result.content != null) {
-    return { output: { role: "tool", ...outputs.result } };
+    return {
+      output: {
+        role: "tool",
+        ...outputs.result,
+        content: normalizeContent(outputs.result.content),
+      },
+    };
   }
 
   return { output: outputs.result };
