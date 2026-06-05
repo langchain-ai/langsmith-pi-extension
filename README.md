@@ -71,7 +71,7 @@ Create either `~/.pi/langsmith.json` for global settings or `.pi/langsmith.json`
     {
       "api_url": "https://api.smith.langchain.com",
       "api_key": "lsv2_pt_...",
-      "project": "opencode-replica",
+      "project": "pi-coding-agent-replica",
       "updates": { "metadata": { "replica": true } }
     }
   ]
