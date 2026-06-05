@@ -2,7 +2,7 @@ import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent
 import { Client, RunTree } from "langsmith";
 
 import { type Config, getConfig } from "./config";
-import { isRecord } from "../test/utils/types";
+import { isRecord } from "./types";
 
 const EXTENSION_NAME = "langsmith-pi-extension";
 const STATUS_KEY = "langsmith";
@@ -14,7 +14,6 @@ interface PendingLlmRun {
   name: string;
   payload: AssumedPayload;
   metadata: Record<string, unknown>;
-  providerResponses: Array<{ status: number; headers: Record<string, string> }>;
 }
 
 interface TraceContext {
@@ -30,10 +29,10 @@ interface TraceContext {
   envRestores: Map<string, { dottedOrder?: string; baggage?: string }>;
 }
 
-interface AssumedPayload {
+type AssumedPayload = {
   input: Array<Record<string, unknown>>;
   tools: Array<Record<string, unknown>>;
-}
+};
 
 type AgentMessage = ContextEvent["messages"][number];
 
@@ -50,24 +49,38 @@ const isMessage = <Role extends string>(
   return message.role === role;
 };
 
+const safeAdd = (...value: Array<number | null | undefined>): number | undefined => {
+  let result: number | undefined = undefined;
+  for (const v of value) {
+    if (v == null) continue;
+    result ??= 0;
+    result += v;
+  }
+  return result;
+};
+
 const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | undefined => {
   if (!isMessage(message, "assistant")) return undefined;
 
   const usage = message.usage;
-
   return {
-    input_tokens: usage?.input,
-    input_cost: usage?.cost?.input,
+    input_tokens: safeAdd(usage?.input, usage?.cacheRead),
+    input_cost: safeAdd(usage?.cost?.input, usage?.cost?.cacheRead),
 
-    output_tokens: usage?.output,
-    output_cost: usage?.cost?.output,
+    output_tokens: safeAdd(usage?.output, usage?.cacheWrite),
+    output_cost: safeAdd(usage?.cost?.output, usage?.cost?.cacheWrite),
 
     total_tokens: usage?.totalTokens,
     total_cost: usage?.cost?.total,
 
     input_token_details: {
-      cache_read: usage.cacheRead,
-      cache_creation: usage.cacheWrite,
+      cache_read: usage?.cacheRead,
+      cache_creation: usage?.cacheWrite,
+    },
+
+    input_cost_details: {
+      cache_read: usage?.cost?.cacheRead,
+      cache_creation: usage?.cost?.cacheWrite,
     },
   };
 };
@@ -120,6 +133,10 @@ const convertPayloadMessages = (payload: unknown): Record<string, unknown>[] | n
 
     return maybeItem;
   });
+};
+
+const convertToolOutputs = (outputs: { result: unknown }) => {
+  return { output: outputs.result };
 };
 
 async function startLlmRun(
@@ -327,10 +344,6 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
     await startLlmRun(active, active.currentTurn ?? active.root, pending);
   });
 
-  pi.on("after_provider_response", async (event) => {
-    active?.pendingLlm?.providerResponses.push({ status: event.status, headers: event.headers });
-  });
-
   pi.on("message_end", async (event) => {
     if (!active || event.message.role !== "assistant" || !active.currentLlm) return;
     const error =
@@ -377,10 +390,10 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
 
     active.tools.delete(event.toolCallId);
     restoreTraceParentEnv(active, event.toolCallId);
+
     await safeEnd(tool, {
-      outputs: { result: event.result },
+      outputs: convertToolOutputs(event),
       error: event.isError ? "Tool execution failed" : undefined,
-      metadata: { isError: event.isError },
     });
   });
 
@@ -390,9 +403,7 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
 
     await safeEnd(active.currentLlm, {
       outputs: { messages: convertMessages([event.message]) },
-      metadata: {
-        usage_metadata: extractUsageMetadata(event.message),
-      },
+      metadata: { usage_metadata: extractUsageMetadata(event.message) },
     });
     active.currentLlm = undefined;
 
