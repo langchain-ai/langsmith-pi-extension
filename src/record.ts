@@ -1,14 +1,26 @@
-import { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs/promises";
 
 export default async function (pi: ExtensionAPI) {
   function createRecord(eventName: string) {
-    return async function record(arg) {
-      await fs.appendFile("langsmith.jsonl", `${JSON.stringify([Date.now(), eventName, arg])}\n`);
+    return async function record(arg: unknown, ctx: ExtensionContext) {
+      await fs.appendFile(
+        "langsmith.jsonl",
+        `${JSON.stringify([
+          Date.now(),
+          eventName,
+          arg,
+          {
+            cwd: ctx.cwd,
+            model: ctx.model,
+            getContextUsage: ctx.getContextUsage?.(),
+          },
+        ])}\n`,
+      );
     };
   }
 
-  pi.on("resources_discover", async (event, pi) => {});
+  pi.on("resources_discover", createRecord("resources_discover"));
   pi.on("session_start", createRecord("session_start"));
   pi.on("session_before_switch", createRecord("session_before_switch"));
   pi.on("session_before_fork", createRecord("session_before_fork"));
