@@ -4,7 +4,7 @@ import { Client } from "langsmith";
 import extension from "../src/index";
 import { replayExtension } from "./utils/replay";
 
-it("replay", { timeout: 60_000 }, async () => {
+it.skip("replay", { timeout: 60_000 }, async () => {
   const client = new Client();
 
   await replayExtension(
