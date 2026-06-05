@@ -108,3 +108,7 @@ Use `replicas` to send runs to additional LangSmith destinations:
   ]
 }
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, testing, and pull request guidance.

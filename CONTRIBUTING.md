@@ -73,10 +73,7 @@ it("my scenario", async () => {
 
   await replayExtension(
     (pi) => extension(pi, { client }),
-    await fs.promises.readFile(
-      new URL("./recordings/my-scenario.jsonl", import.meta.url),
-      "utf-8",
-    ),
+    await fs.promises.readFile(new URL("./recordings/my-scenario.jsonl", import.meta.url), "utf-8"),
   );
 
   await client.awaitPendingTraceBatches();
