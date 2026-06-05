@@ -97,7 +97,20 @@ export const normalizeContentPart = (part: unknown): unknown => {
 
 const normalizeContent = (content: unknown): unknown => {
   if (!Array.isArray(content)) return content;
-  return content.map(normalizeContentPart);
+  return content.map(convertContentPart);
+};
+
+// Single per-part converter applied to every message role.
+// assistant tool calls become LangSmith `tool_call` parts
+// multimodal parts are normalized for inline rendering
+// everything else passes through.
+const convertContentPart = (part: unknown): unknown => {
+  if (isRecord(part) && part.type === "toolCall") {
+    const { arguments: args, type: _, ...rest } = part;
+    return { type: "tool_call", args, ...rest };
+  }
+
+  return normalizeContentPart(part);
 };
 
 export const convertMessages = (messages: AgentMessage[]): Record<string, unknown>[] => {
@@ -108,20 +121,7 @@ export const convertMessages = (messages: AgentMessage[]): Record<string, unknow
       role = "tool";
     }
 
-    if (message.role === "assistant") {
-      // Assistant content is text/thinking/toolCall only — never multimodal.
-      content = message.content.map((part) => {
-        if (part.type === "toolCall") {
-          const { arguments: args, type: _, ...rest } = part;
-          return { type: "tool_call", args, ...rest };
-        }
-
-        return part;
-      });
-    } else {
-      // user and toolResult content may carry image parts.
-      content = normalizeContent(content);
-    }
+    content = normalizeContent(content);
 
     return { role, content, ...rest };
   });
