@@ -1,8 +1,8 @@
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Client, RunTree } from "langsmith";
 
-import { type Config, getConfig } from "./config";
-import { isRecord } from "./types";
+import { type Config, getConfig } from "./config.js";
+import { isRecord } from "./types.js";
 
 const EXTENSION_NAME = "langsmith-pi-extension";
 const STATUS_KEY = "langsmith";

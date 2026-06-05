@@ -5,7 +5,7 @@ export default async function (pi: ExtensionAPI) {
   function createRecord(eventName: string) {
     return async function record(arg: unknown, ctx: ExtensionContext) {
       await fs.appendFile(
-        "langsmith.jsonl",
+        new URL("../../langsmith.jsonl", import.meta.url),
         `${JSON.stringify([
           Date.now(),
           eventName,
