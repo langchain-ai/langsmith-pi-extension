@@ -494,3 +494,333 @@ it("anthropic", async () => {
     expect(run.inputs).not.toHaveProperty("system");
   }
 });
+
+it("gemini", async () => {
+  const { client, callSpy } = mockClient();
+
+  await replayExtension(
+    (pi) => extension(pi, { client }),
+    await fs.promises.readFile(
+      new URL("./recordings/gemini-tool-calls.jsonl", import.meta.url),
+      "utf-8",
+    ),
+  );
+
+  await client.awaitPendingTraceBatches();
+  const tree = await getAssumedTreeFromCalls(callSpy.mock.calls, client);
+
+  const expected = asTree((run) => {
+    run`Pi agent run:0`(
+      {
+        run_type: "chain",
+        inputs: { imageCount: 0 },
+        error: expect.stringContaining("Quota exceeded"),
+        extra: { metadata: { ls_integration: "langsmith-pi-extension" } },
+      },
+      run`Pi turn 0:1`(
+        { run_type: "chain", inputs: { turnIndex: 0 } },
+        run`google:2`({
+          run_type: "llm",
+          inputs: {
+            model: "gemini-3.5-flash",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "What's this repo about. Do as many tool calls as possible to be 100% sure.",
+                  },
+                ],
+              },
+            ],
+          },
+          outputs: {
+            messages: [
+              expect.objectContaining({
+                role: "assistant",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "tool_call",
+                    name: "bash",
+                    args: { command: "ls -F" },
+                  }),
+                ]),
+              }),
+            ],
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 1785,
+                output_tokens: 142,
+                total_tokens: 1927,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`bash:3`({ run_type: "tool", inputs: { args: { command: "ls -F" } } }),
+      ),
+      run`Pi turn 1:4`(
+        { run_type: "chain", inputs: { turnIndex: 1 } },
+        run`google:5`({
+          run_type: "llm",
+          inputs: {
+            messages: [
+              expect.objectContaining({
+                role: "user",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "text",
+                    text: expect.stringContaining("What's this repo about"),
+                  }),
+                ]),
+              }),
+              expect.objectContaining({
+                role: "assistant",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_call",
+                    function_call: expect.objectContaining({
+                      name: "bash",
+                      arguments: { command: "ls -F" },
+                    }),
+                  }),
+                ]),
+              }),
+              expect.objectContaining({
+                role: "user",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_response",
+                    function_response: expect.objectContaining({ name: "bash" }),
+                  }),
+                ]),
+              }),
+            ],
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 2013,
+                output_tokens: 69,
+                total_tokens: 2082,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`read:6`({ run_type: "tool", inputs: { args: { path: "package.json" } } }),
+        run`read:7`({ run_type: "tool", inputs: { args: { path: "README.md" } } }),
+      ),
+      run`Pi turn 2:8`(
+        { run_type: "chain", inputs: { turnIndex: 2 } },
+        run`google:9`({
+          run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "user",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_response",
+                    function_response: expect.objectContaining({ name: "read" }),
+                  }),
+                ]),
+              }),
+            ]),
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 3863,
+                output_tokens: 59,
+                total_tokens: 3922,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`bash:10`({ run_type: "tool", inputs: { args: { command: "find src -type f" } } }),
+      ),
+      run`Pi turn 3:11`(
+        { run_type: "chain", inputs: { turnIndex: 3 } },
+        run`google:12`({
+          run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "assistant",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_call",
+                    function_call: expect.objectContaining({
+                      name: "bash",
+                      arguments: { command: "find src -type f" },
+                    }),
+                  }),
+                ]),
+              }),
+            ]),
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 3951,
+                output_tokens: 87,
+                total_tokens: 4038,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`read:13`({ run_type: "tool", inputs: { args: { path: "src/index.ts" } } }),
+        run`read:14`({ run_type: "tool", inputs: { args: { path: "src/config.ts" } } }),
+      ),
+      run`Pi turn 4:15`(
+        { run_type: "chain", inputs: { turnIndex: 4 } },
+        run`google:16`({
+          run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "user",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_response",
+                    function_response: expect.objectContaining({ name: "read" }),
+                  }),
+                ]),
+              }),
+            ]),
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 9538,
+                output_tokens: 36,
+                total_tokens: 9574,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`read:17`({ run_type: "tool", inputs: { args: { path: "src/types.ts" } } }),
+      ),
+      run`Pi turn 5:18`(
+        { run_type: "chain", inputs: { turnIndex: 5 } },
+        run`google:19`({
+          run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "assistant",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_call",
+                    function_call: expect.objectContaining({
+                      name: "read",
+                      arguments: { path: "src/types.ts" },
+                    }),
+                  }),
+                ]),
+              }),
+            ]),
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 9711,
+                output_tokens: 54,
+                total_tokens: 9765,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`bash:20`({ run_type: "tool", inputs: { args: { command: "find test -type f" } } }),
+      ),
+      run`Pi turn 6:21`(
+        { run_type: "chain", inputs: { turnIndex: 6 } },
+        run`google:22`({
+          run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "user",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_response",
+                    function_response: expect.objectContaining({ name: "bash" }),
+                  }),
+                ]),
+              }),
+            ]),
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 9866,
+                output_tokens: 46,
+                total_tokens: 9912,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+        run`read:23`({
+          run_type: "tool",
+          inputs: { args: { path: "test/normalize.test.ts" } },
+        }),
+      ),
+      run`Pi turn 7:24`(
+        { run_type: "chain", inputs: { turnIndex: 7 } },
+        run`google:25`({
+          run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "assistant",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "function_call",
+                    function_call: expect.objectContaining({
+                      name: "read",
+                      arguments: { path: "test/normalize.test.ts" },
+                    }),
+                  }),
+                ]),
+              }),
+            ]),
+          },
+          outputs: {
+            messages: [
+              expect.objectContaining({
+                role: "assistant",
+                stopReason: "error",
+                errorMessage: expect.stringContaining("Quota exceeded"),
+              }),
+            ],
+          },
+          error: expect.stringContaining("Quota exceeded"),
+          extra: {
+            metadata: {
+              stop_reason: "error",
+              usage_metadata: {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                input_token_details: { cache_read: 0, cache_creation: 0 },
+              },
+            },
+          },
+        }),
+      ),
+    );
+  });
+
+  expect(tree.nodes).toEqual(expected.nodes);
+  expect(tree.edges).toEqual(expected.edges);
+  expect(tree.data).toMatchObject(expected.data);
+});
