@@ -310,17 +310,29 @@ it("anthropic", async () => {
             model: "claude-opus-4-8",
             stream: true,
             messages: [
-              { role: "user", content: [{ type: "text", text: "Inspect this repo for me" }] },
+              {
+                role: "system",
+                content: expect.stringContaining("coding assistant"),
+                _raw: [{ type: "text", text: expect.stringContaining("coding assistant") }],
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "What's this repo about. Do as many tool calls as possible to be 100% sure.",
+                  },
+                ],
+              },
             ],
-            system: [{ type: "text", text: expect.stringContaining("coding assistant") }],
           },
           extra: {
             metadata: {
               usage_metadata: {
-                input_tokens: 2838,
-                output_tokens: 108,
-                total_tokens: 2946,
-                input_token_details: { cache_read: 0, cache_creation: 2836 },
+                input_tokens: 2855,
+                output_tokens: 246,
+                total_tokens: 3101,
+                input_token_details: { cache_read: 2755, cache_creation: 98 },
               },
             },
           },
@@ -329,146 +341,142 @@ it("anthropic", async () => {
           run_type: "tool",
           inputs: { args: { command: expect.stringContaining("ls -la") } },
         }),
+        run`bash:4`({
+          run_type: "tool",
+          inputs: { args: { command: expect.stringContaining("cat package.json") } },
+        }),
+        run`bash:5`({
+          run_type: "tool",
+          inputs: { args: { command: expect.stringContaining("git log") } },
+        }),
       ),
-      run`Pi turn 1:4`(
+      run`Pi turn 1:6`(
         { run_type: "chain", inputs: { turnIndex: 1 } },
-        run`anthropic:5`({
+        run`anthropic:7`({
+          run_type: "llm",
+          inputs: {
+            messages: [
+              { role: "system", content: expect.stringContaining("coding assistant") },
+              {
+                role: "user",
+                content: expect.arrayContaining([
+                  expect.objectContaining({
+                    type: "text",
+                    text: expect.stringContaining("What's this repo about"),
+                  }),
+                ]),
+              },
+              {
+                role: "assistant",
+                content: expect.arrayContaining([
+                  expect.objectContaining({ type: "thinking" }),
+                  expect.objectContaining({ type: "tool_use" }),
+                ]),
+              },
+              { role: "tool", tool_use_id: expect.stringContaining("toolu_") },
+              { role: "tool", tool_use_id: expect.stringContaining("toolu_") },
+              { role: "tool", tool_use_id: expect.stringContaining("toolu_") },
+            ],
+          },
+          extra: {
+            metadata: {
+              usage_metadata: {
+                input_tokens: 7351,
+                output_tokens: 196,
+                total_tokens: 7351 + 196,
+                input_token_details: { cache_read: 2853, cache_creation: 4496 },
+              },
+            },
+          },
+        }),
+        run`bash:8`({
+          run_type: "tool",
+          inputs: { args: { command: expect.stringContaining("find src") } },
+        }),
+        run`bash:9`({
+          run_type: "tool",
+          inputs: { args: { command: expect.stringContaining("head -60 src/index.ts") } },
+        }),
+      ),
+      run`Pi turn 2:10`(
+        { run_type: "chain", inputs: { turnIndex: 2 } },
+        run`anthropic:11`({
           run_type: "llm",
           inputs: {
             messages: expect.arrayContaining([
               expect.objectContaining({
                 role: "tool",
-                tool_use_id: expect.stringContaining("tool"),
+                tool_use_id: expect.stringContaining("toolu_"),
               }),
             ]),
           },
           extra: {
             metadata: {
               usage_metadata: {
-                input_tokens: 4056,
-                output_tokens: 85,
-                total_tokens: 4056 + 85,
-                input_token_details: { cache_read: 2836, cache_creation: 1218 },
+                input_tokens: 8537,
+                output_tokens: 141,
+                total_tokens: 8537 + 141,
+                input_token_details: { cache_read: 7349, cache_creation: 1186 },
               },
             },
           },
         }),
-        run`bash:6`({
+        run`read:12`({
           run_type: "tool",
-          inputs: { args: { command: expect.stringContaining("find src") } },
+          inputs: { args: { path: "src/index.ts", offset: 60, limit: 200 } },
+        }),
+        run`read:13`({
+          run_type: "tool",
+          inputs: { args: { path: "src/config.ts" } },
         }),
       ),
-      run`Pi turn 2:7`(
-        { run_type: "chain", inputs: { turnIndex: 2 } },
-        run`anthropic:8`({
-          run_type: "llm",
-          extra: {
-            metadata: {
-              usage_metadata: {
-                input_tokens: 4414,
-                output_tokens: 75,
-                total_tokens: 4414 + 75,
-                input_token_details: { cache_read: 4054, cache_creation: 358 },
-              },
-            },
-          },
-        }),
-        run`bash:9`({
-          run_type: "tool",
-          inputs: { args: { command: expect.stringContaining("cd") } },
-        }),
-      ),
-      run`Pi turn 3:10`(
+      run`Pi turn 3:14`(
         { run_type: "chain", inputs: { turnIndex: 3 } },
-        run`anthropic:11`({
+        run`anthropic:15`({
           run_type: "llm",
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "tool",
+                tool_use_id: expect.stringContaining("toolu_"),
+              }),
+            ]),
+          },
           extra: {
             metadata: {
               usage_metadata: {
-                input_tokens: 10831,
-                output_tokens: 103,
-                total_tokens: 10831 + 103,
-                input_token_details: { cache_read: 4412, cache_creation: 6417 },
+                input_tokens: 12669,
+                output_tokens: 94,
+                total_tokens: 12669 + 94,
+                input_token_details: { cache_read: 8535, cache_creation: 4132 },
               },
             },
           },
         }),
-        run`bash:12`({
+        run`read:16`({
           run_type: "tool",
-          inputs: { args: { command: expect.stringContaining("cd") } },
+          inputs: { args: { path: "src/index.ts", offset: 260, limit: 220 } },
         }),
       ),
-      run`Pi turn 4:13`(
+      run`Pi turn 4:17`(
         { run_type: "chain", inputs: { turnIndex: 4 } },
-        run`anthropic:14`({
+        run`anthropic:18`({
           run_type: "llm",
-          extra: {
-            metadata: {
-              usage_metadata: {
-                input_tokens: 13750,
-                output_tokens: 116,
-                total_tokens: 13750 + 116,
-                input_token_details: { cache_read: 10829, cache_creation: 2919 },
-              },
-            },
+          inputs: {
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: "tool",
+                tool_use_id: expect.stringContaining("toolu_"),
+              }),
+            ]),
           },
-        }),
-        run`bash:15`({
-          run_type: "tool",
-          inputs: { args: { command: expect.stringContaining("cd") } },
-        }),
-      ),
-      run`Pi turn 5:16`(
-        { run_type: "chain", inputs: { turnIndex: 5 } },
-        run`anthropic:17`({
-          run_type: "llm",
           extra: {
             metadata: {
               usage_metadata: {
-                input_tokens: 15178,
-                output_tokens: 123,
-                total_tokens: 15178 + 123,
-                input_token_details: { cache_read: 13748, cache_creation: 1428 },
-              },
-            },
-          },
-        }),
-        run`bash:18`({
-          run_type: "tool",
-          inputs: { args: { command: expect.stringContaining("cd") } },
-        }),
-      ),
-      run`Pi turn 6:19`(
-        { run_type: "chain", inputs: { turnIndex: 6 } },
-        run`anthropic:20`({
-          run_type: "llm",
-          extra: {
-            metadata: {
-              usage_metadata: {
-                input_tokens: 16633,
-                output_tokens: 170,
-                total_tokens: 16633 + 170,
-                input_token_details: { cache_read: 15176, cache_creation: 1455 },
-              },
-            },
-          },
-        }),
-        run`bash:21`({
-          run_type: "tool",
-          inputs: { args: { command: expect.stringContaining("cd") } },
-        }),
-      ),
-      run`Pi turn 7:22`(
-        { run_type: "chain", inputs: { turnIndex: 7 } },
-        run`anthropic:23`({
-          run_type: "llm",
-          extra: {
-            metadata: {
-              usage_metadata: {
-                input_tokens: 16941,
-                output_tokens: 1447,
-                total_tokens: 16941 + 1447,
-                input_token_details: { cache_read: 16631, cache_creation: 308 },
+                input_tokens: 15583,
+                output_tokens: 1035,
+                total_tokens: 15583 + 1035,
+                input_token_details: { cache_read: 12667, cache_creation: 2914 },
               },
             },
           },
@@ -480,4 +488,9 @@ it("anthropic", async () => {
   expect(tree.nodes).toEqual(expected.nodes);
   expect(tree.edges).toEqual(expected.edges);
   expect(tree.data).toMatchObject(expected.data);
+
+  for (const [name, run] of Object.entries(tree.data)) {
+    if (!name.startsWith("anthropic:")) continue;
+    expect(run.inputs).not.toHaveProperty("system");
+  }
 });
