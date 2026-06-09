@@ -175,28 +175,51 @@ const convertProviderPayload = (payload: unknown) => {
   }
 
   if (Array.isArray(payload.messages)) {
-    const { messages, ...rest } = payload;
-    return {
-      messages: messages.flatMap((maybe) => {
-        if (!isRecord(maybe)) return maybe;
+    const { messages: _, system: __, ...rest } = payload;
 
-        if (Array.isArray(maybe.content)) {
-          // Anthropic: Mislabeled tool messages as user messages
-          if (
-            maybe.role === "user" &&
-            maybe.content.length === 1 &&
-            maybe.content.every((part) => isRecord(part) && part.type === "tool_result")
-          ) {
-            const [{ type: __, ...restPart }] = maybe.content;
-            const { role: _, ...rest } = maybe;
-            return { role: "tool", ...rest, ...restPart };
-          }
+    let messages = payload.messages.flatMap((maybe) => {
+      if (!isRecord(maybe)) return maybe;
+
+      if (Array.isArray(maybe.content)) {
+        // Anthropic: Mislabeled tool messages as user messages
+        if (
+          maybe.role === "user" &&
+          maybe.content.every((part) => isRecord(part) && part.type === "tool_result")
+        ) {
+          const { role: _, ...rest } = maybe;
+          return maybe.content
+            .map((part: unknown) => {
+              if (!isRecord(part)) return null;
+              const { type: __, ...restPart } = part;
+              return { role: "tool", ...rest, ...restPart };
+            })
+            .filter(isRecord);
         }
+      }
 
-        return maybe;
-      }),
-      ...rest,
-    };
+      return maybe;
+    });
+
+    // Anthropic: Handle complex system message
+    if (
+      payload.system != null &&
+      !messages.some((msg) => msg.role === "system" || msg.role === "developer")
+    ) {
+      const plainSystem =
+        Array.isArray(payload.system) &&
+        payload.system.length === 1 &&
+        payload.system.every((i) => isRecord(i) && i.type === "text" && typeof i.text === "string")
+          ? payload.system.at(0).text
+          : undefined;
+
+      messages.unshift({
+        role: "system",
+        content: plainSystem ?? payload.system,
+        _raw: payload.system,
+      });
+    }
+
+    return { messages, ...rest };
   }
 
   return payload;
