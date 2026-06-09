@@ -76,6 +76,17 @@ const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | 
   };
 };
 
+const omitKeys = <T extends Record<string, unknown>, K extends keyof T>(
+  obj: T,
+  ...keys: K[]
+): Omit<T, K> => {
+  const result = { ...obj };
+  for (const key of keys) {
+    delete result[key];
+  }
+  return result;
+};
+
 const MULTIMODAL_PART_TYPES = new Set(["image"]);
 
 // Pi represents binary content (e.g. images read by the `read` tool, or attached
@@ -171,6 +182,56 @@ const convertProviderPayload = (payload: unknown) => {
         return maybe;
       }),
       ...rest,
+    };
+  }
+
+  // Gemini
+  if (Array.isArray(payload.contents) && payload.messages == null) {
+    return {
+      messages: payload.contents.map((maybe) => {
+        if (!isRecord(maybe) || typeof maybe.role !== "string" || !Array.isArray(maybe.parts)) {
+          return maybe;
+        }
+
+        return {
+          role: { user: "user", model: "assistant" }[maybe.role] ?? maybe.role,
+          content: maybe.parts.map((part) => {
+            if (!isRecord(part)) return part;
+
+            if (typeof part.text === "string") {
+              return { type: "text", text: part.text, ...omitKeys(part, "text") };
+            }
+
+            if (isRecord(part.functionCall)) {
+              return {
+                type: "function_call",
+                function_call: {
+                  id: part.functionCall.id ?? null,
+                  name: part.functionCall.name,
+                  arguments: part.functionCall.args,
+                },
+                ...omitKeys(part, "functionCall"),
+              };
+            }
+
+            if (isRecord(part.functionResponse)) {
+              return {
+                type: "function_response",
+                function_response: part.functionResponse,
+                ...omitKeys(part, "functionResponse"),
+              };
+            }
+
+            if (isRecord(part.imageUrl)) {
+              return { type: "image_url", image_url: part.imageUrl, ...omitKeys(part, "imageUrl") };
+            }
+
+            return part;
+          }),
+          ...omitKeys(maybe, "role", "parts"),
+        };
+      }),
+      ...omitKeys(payload, "contents"),
     };
   }
 
@@ -466,9 +527,19 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
       await safeEnd(turn, { outputs: { incomplete: true } });
     }
 
-    const root = active.root;
-    await safeEnd(root, {
+    const lastMessage = event.messages.at(-1);
+    let error: string | undefined = undefined;
+    if (lastMessage?.role === "assistant") {
+      if (lastMessage.stopReason === "error") {
+        error = lastMessage.errorMessage;
+      } else if (lastMessage.stopReason === "aborted") {
+        error = "Assistant message was aborted";
+      }
+    }
+
+    await safeEnd(active.root, {
       outputs: { messages: convertMessages(event.messages), context_usage: ctx.getContextUsage() },
+      error,
     });
 
     active = undefined;
