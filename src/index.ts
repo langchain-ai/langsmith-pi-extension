@@ -50,30 +50,43 @@ const safeAdd = (...value: Array<number | null | undefined>): number | undefined
   return result;
 };
 
-const extractUsageMetadata = (message: AgentMessage): Record<string, unknown> | undefined => {
+export const extractUsageMetadata = (
+  message: AgentMessage,
+): Record<string, unknown> | undefined => {
   if (!isMessage(message, "assistant")) return undefined;
 
   const usage = message.usage;
-  return {
+  const totalTokens = usage?.totalTokens;
+  const totalCost = usage?.cost?.total;
+  // Tokens but zero cost means pi has no pricing; omit cost so LangSmith prices it.
+  const costUnknown = (totalTokens ?? 0) > 0 && (totalCost ?? 0) === 0;
+
+  const metadata: Record<string, unknown> = {
     input_tokens: safeAdd(usage?.input, usage?.cacheRead, usage?.cacheWrite),
-    input_cost: safeAdd(usage?.cost?.input, usage?.cost?.cacheRead, usage?.cost?.cacheWrite),
-
     output_tokens: usage?.output,
-    output_cost: usage?.cost?.output,
-
-    total_tokens: usage?.totalTokens,
-    total_cost: usage?.cost?.total,
+    total_tokens: totalTokens,
 
     input_token_details: {
       cache_read: usage?.cacheRead,
       cache_creation: usage?.cacheWrite,
     },
+  };
 
-    input_cost_details: {
+  if (!costUnknown) {
+    metadata.input_cost = safeAdd(
+      usage?.cost?.input,
+      usage?.cost?.cacheRead,
+      usage?.cost?.cacheWrite,
+    );
+    metadata.output_cost = usage?.cost?.output;
+    metadata.total_cost = totalCost;
+    metadata.input_cost_details = {
       cache_read: usage?.cost?.cacheRead,
       cache_creation: usage?.cost?.cacheWrite,
-    },
-  };
+    };
+  }
+
+  return metadata;
 };
 
 const omitKeys = <T extends Record<string, unknown>, K extends keyof T>(
