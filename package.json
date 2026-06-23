@@ -1,6 +1,6 @@
 {
   "name": "@langchain/langsmith-pi-extension",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "LangSmith extension for Pi Coding Agent",
   "keywords": [
     "coding-agent",
@@ -29,8 +29,9 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/inject-version.mjs && tsc",
     "test": "vitest",
+    "pretest": "node scripts/inject-version.mjs",
     "format": "oxfmt",
     "lint": "oxfmt --check && tsc --noEmit",
     "changeset": "changeset",
