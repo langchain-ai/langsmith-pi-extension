@@ -1,6 +1,6 @@
 {
   "name": "@langchain/langsmith-pi-extension",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "description": "LangSmith extension for Pi Coding Agent",
   "keywords": [
     "coding-agent",
