@@ -29,8 +29,9 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/inject-version.mjs && tsc",
     "test": "vitest",
+    "pretest": "node scripts/inject-version.mjs",
     "format": "oxfmt",
     "lint": "oxfmt --check && tsc --noEmit",
     "changeset": "changeset",

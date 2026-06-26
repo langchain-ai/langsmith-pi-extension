@@ -2,9 +2,9 @@ import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent
 import { Client, RunTree } from "langsmith";
 
 import { type Config, getConfig } from "./config.js";
+import { codingAgentMetadata } from "./metadata.js";
 import { isRecord } from "./types.js";
 
-const EXTENSION_NAME = "langsmith-pi-extension";
 const STATUS_KEY = "langsmith";
 
 interface PendingLlmRun {
@@ -338,6 +338,8 @@ function createRootRun(
   prompt: string,
   imageCount: number,
   cwd: string,
+  threadId: string | undefined,
+  turnNumber: number,
 ): RunTree {
   const config = {
     name: "Pi agent run",
@@ -346,8 +348,8 @@ function createRootRun(
     client,
     inputs: { prompt, imageCount },
     metadata: {
-      ls_integration: EXTENSION_NAME,
-      cwd,
+      // Shared coding-agent-v1 base contract; propagates to all child runs.
+      ...codingAgentMetadata({ threadId, cwd, turnNumber }),
       ...extensionConfig.metadata,
     },
     tags: ["pi", "coding-agent"],
@@ -371,6 +373,15 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
     : undefined;
 
   let active: TraceContext | undefined;
+
+  // pi exposes no user-turn counter; keep a 1-based one keyed by session id.
+  const userTurnByThread = new Map<string, number>();
+  const nextUserTurn = (threadId: string | undefined): number => {
+    const key = threadId ?? "";
+    const next = (userTurnByThread.get(key) ?? 0) + 1;
+    userTurnByThread.set(key, next);
+    return next;
+  };
 
   pi.on("session_start", async (_event, ctx) => {
     if (enabled) {
@@ -399,8 +410,17 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
       });
     }
 
+    const threadId = ctx.sessionManager?.getSessionId?.();
     active = {
-      root: createRootRun(client, config, event.prompt, event.images?.length ?? 0, ctx.cwd),
+      root: createRootRun(
+        client,
+        config,
+        event.prompt,
+        event.images?.length ?? 0,
+        ctx.cwd,
+        threadId,
+        nextUserTurn(threadId),
+      ),
       turns: new Map(),
       deferNextLlmToNextTurn: false,
       tools: new Map(),
@@ -419,6 +439,8 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
         ls_provider: ctx.model?.provider,
         ls_model_name: ctx.model?.name?.toLocaleLowerCase(),
         timestamp: event.timestamp,
+        // Inner agent-loop (ReAct) index, for debugging only — not turn_number.
+        pi_loop_index: event.turnIndex,
       },
     });
     active.turns.set(event.turnIndex, turn);

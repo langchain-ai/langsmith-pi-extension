@@ -26,7 +26,7 @@ it("openai responses", async () => {
       {
         run_type: "chain",
         inputs: { imageCount: 0 },
-        extra: { metadata: { ls_integration: "langsmith-pi-extension" } },
+        extra: { metadata: { ls_integration: "pi" } },
       },
       run`Pi turn 0:1`(
         { run_type: "chain", inputs: { turnIndex: 0 } },
@@ -300,7 +300,7 @@ it("anthropic", async () => {
       {
         run_type: "chain",
         inputs: { imageCount: 0 },
-        extra: { metadata: { ls_integration: "langsmith-pi-extension" } },
+        extra: { metadata: { ls_integration: "pi" } },
       },
       run`Pi turn 0:1`(
         { run_type: "chain", inputs: { turnIndex: 0 } },
@@ -515,7 +515,7 @@ it("gemini", async () => {
         run_type: "chain",
         inputs: { imageCount: 0 },
         error: expect.stringContaining("Quota exceeded"),
-        extra: { metadata: { ls_integration: "langsmith-pi-extension" } },
+        extra: { metadata: { ls_integration: "pi" } },
       },
       run`Pi turn 0:1`(
         { run_type: "chain", inputs: { turnIndex: 0 } },
