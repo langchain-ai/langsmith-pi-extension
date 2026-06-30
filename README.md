@@ -46,6 +46,8 @@ Configuration can come from environment variables or JSON config files. Values a
 | `LANGSMITH_PI_PROJECT`        | LangSmith project name. Falls back to `LANGSMITH_PROJECT`. Defaults to `pi-coding-agent`.                           |
 | `LANGSMITH_PI_METADATA`       | JSON object added to the root run metadata. Falls back to `LANGSMITH_METADATA`.                                     |
 | `LANGSMITH_PI_RUNS_ENDPOINTS` | JSON array of replica run destinations. Falls back to `LANGSMITH_RUNS_ENDPOINTS`.                                   |
+| `LANGSMITH_PI_REDACT`         | Redacts detected secrets from traces before upload. On by default; set to `false` to opt out.                        |
+| `LANGSMITH_PI_REDACT_EXTRA`   | JSON array of extra `{ "pattern", "replace" }` redaction rules.                                                      |
 
 Example:
 
@@ -86,6 +88,8 @@ Create either `~/.pi/langsmith.json` for global settings or `.pi/langsmith.json`
 | `project`  | No       | `pi-coding-agent`     | LangSmith project name.                                                          |
 | `metadata` | No       | -                     | Object merged into root trace metadata.                                          |
 | `replicas` | No       | -                     | Array of additional LangSmith destinations to replicate traces to.               |
+| `redact`   | No       | `true`                | Redact detected secrets from traces before upload.                               |
+| `redact_extra_rules` | No | -                  | Array of extra `{ pattern, replace }` redaction rules.                            |
 
 ### Replicas
 
