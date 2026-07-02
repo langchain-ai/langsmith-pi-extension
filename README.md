@@ -80,16 +80,16 @@ Create either `~/.pi/langsmith.json` for global settings or `.pi/langsmith.json`
 }
 ```
 
-| Field                | Required | Default               | Description                                                                      |
-| -------------------- | -------- | --------------------- | -------------------------------------------------------------------------------- |
-| `enabled`            | Yes      | `false`               | Set to `true` to enable tracing from the config file.                            |
-| `api_key`            | No\*     | -                     | LangSmith API key. Required unless provided by environment variable or replicas. |
-| `api_url`            | No       | LangSmith SDK default | LangSmith API URL, usually `https://api.smith.langchain.com`.                    |
-| `project`            | No       | `pi-coding-agent`     | LangSmith project name.                                                          |
-| `metadata`           | No       | -                     | Object merged into root trace metadata.                                          |
-| `replicas`           | No       | -                     | Array of additional LangSmith destinations to replicate traces to.               |
-| `redact`             | No       | `true`                | Redact detected secrets from traces before upload.                               |
-| `redact_extra_rules` | No       | -                     | Array of extra `{ pattern, replace }` redaction rules.                           |
+| Field                | Required | Default               | Description                                                                              |
+| -------------------- | -------- | --------------------- | ---------------------------------------------------------------------------------------- |
+| `enabled`            | Yes      | `false`               | Set to `true` to enable tracing from the config file.                                    |
+| `api_key`            | No\*     | -                     | LangSmith API key. Required unless provided by environment variable or replicas.         |
+| `api_url`            | No       | LangSmith SDK default | LangSmith API URL, usually `https://api.smith.langchain.com`.                            |
+| `project`            | No       | `pi-coding-agent`     | LangSmith project name.                                                                  |
+| `metadata`           | No       | -                     | Object merged into root trace metadata.                                                  |
+| `replicas`           | No       | -                     | Array of additional LangSmith destinations to replicate traces to.                       |
+| `redact`             | No       | `true`                | Redact detected secrets from traces before upload.                                       |
+| `redact_extra_rules` | No       | -                     | Array of extra `{ pattern, replace }` redaction rules. Each `pattern` is case-sensitive. |
 
 ### Replicas
 
