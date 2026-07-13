@@ -6,7 +6,8 @@ import { VERSION as PI_RUNTIME_VERSION } from "@earendil-works/pi-coding-agent";
 import { INTEGRATION_VERSION } from "./version.js";
 
 // ── Frozen coding-agent-v1 literals for the pi integration ───────────────────
-export const LS_AGENT_KIND = "coding_agent";
+export const LS_AGENT_PURPOSE = "coding";
+export type LSAgentType = "root" | "subagent" | "middleware" | "compaction";
 export const LS_INTEGRATION = "pi";
 export const LS_AGENT_RUNTIME = "Pi";
 export const LS_TRACE_SCHEMA_VERSION = "coding-agent-v1";
@@ -104,6 +105,8 @@ const compact = (obj: Record<string, unknown>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
 
 export interface CodingAgentMetadataInput {
+  /** Role of the run within the coding-agent trace. */
+  agentType: LSAgentType;
   /** Stable conversation/session id — coding-agent-v1 thread_id. */
   threadId?: string;
   /** Current working directory for the trace. */
@@ -121,7 +124,8 @@ export function codingAgentMetadata(input: CodingAgentMetadataInput): Record<str
 
   return compact({
     // Identity & grouping — always.
-    ls_agent_kind: LS_AGENT_KIND,
+    ls_agent_purpose: LS_AGENT_PURPOSE,
+    ls_agent_type: input.agentType,
     ls_integration: LS_INTEGRATION,
     ls_agent_runtime: LS_AGENT_RUNTIME,
     ls_trace_schema_version: LS_TRACE_SCHEMA_VERSION,
