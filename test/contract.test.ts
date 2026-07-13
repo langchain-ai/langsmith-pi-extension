@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import extension from "../src/index";
+import { codingAgentMetadata, type LSAgentType } from "../src/metadata";
 import { mockClient } from "./utils/mock_client";
 import { getAssumedTreeFromCalls } from "./utils/tree";
 
@@ -69,6 +70,17 @@ async function driveOneTurn(init: (api: ExtensionAPI) => Promise<void>) {
   await fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop", content: [] }] });
 }
 
+it.each<LSAgentType>(["root", "subagent", "middleware", "compaction"])(
+  "supports the %s agent type",
+  (agentType) => {
+    const metadata = codingAgentMetadata({ agentType, cwd: process.cwd() });
+
+    expect(metadata.ls_agent_type).toBe(agentType);
+    expect(metadata.ls_agent_purpose).toBe("coding");
+    expect(metadata.ls_agent_kind).toBeUndefined();
+  },
+);
+
 it("emits the coding-agent-v1 contract on every run type", async () => {
   const { client, callSpy } = mockClient();
 
@@ -91,7 +103,9 @@ it("emits the coding-agent-v1 contract on every run type", async () => {
 
   // ── Identity block — required on every run (root stamps, children inherit).
   for (const md of [root, turn, llm, tool]) {
-    expect(md.ls_agent_kind).toBe("coding_agent");
+    expect(md.ls_agent_purpose).toBe("coding");
+    expect(md.ls_agent_type).toBe("root");
+    expect(md.ls_agent_kind).toBeUndefined();
     expect(md.ls_integration).toBe("pi");
     expect(md.ls_agent_runtime).toBe("Pi");
     expect(md.ls_trace_schema_version).toBe("coding-agent-v1");

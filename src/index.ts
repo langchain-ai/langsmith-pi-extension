@@ -349,7 +349,7 @@ function createRootRun(
     inputs: { prompt, imageCount },
     metadata: {
       // Shared coding-agent-v1 base contract; propagates to all child runs.
-      ...codingAgentMetadata({ threadId, cwd, turnNumber }),
+      ...codingAgentMetadata({ agentType: "root", threadId, cwd, turnNumber }),
       ...extensionConfig.metadata,
     },
     tags: ["pi", "coding-agent"],
