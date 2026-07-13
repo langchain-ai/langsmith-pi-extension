@@ -44,6 +44,14 @@ export const ConfigSchema = z.object({
 
   // LANGSMITH_PI_RUNS_ENDPOINTS
   replicas: z.array(ReplicaSchema).optional(),
+
+  // LANGSMITH_PI_REDACT (default true) — redact secrets before upload
+  redact: z.boolean(),
+
+  // LANGSMITH_PI_REDACT_EXTRA — extra { pattern, replace } redaction rules
+  redact_extra_rules: z
+    .array(z.object({ pattern: z.string(), replace: z.string().optional() }))
+    .optional(),
 });
 
 const PartialConfigSchema = ConfigSchema.partial();
@@ -92,16 +100,24 @@ function getVar(suffix: string, env: Record<string, string | undefined>): string
 const readConfigEnv = (env: Record<string, string | undefined>): Partial<Config> => {
   const enabled = parseBoolean(env.TRACE_TO_LANGSMITH);
 
-  return stripUndefined(
-    PartialConfigSchema.parse({
-      enabled,
-      api_key: getVar("API_KEY", env),
-      api_url: getVar("ENDPOINT", env),
-      project: getVar("PROJECT", env),
-      metadata: parseJson(getVar("METADATA", env)),
-      replicas: parseJson(getVar("RUNS_ENDPOINTS", env)),
-    }),
-  );
+  try {
+    return stripUndefined(
+      PartialConfigSchema.parse({
+        enabled,
+        api_key: getVar("API_KEY", env),
+        api_url: getVar("ENDPOINT", env),
+        project: getVar("PROJECT", env),
+        metadata: parseJson(getVar("METADATA", env)),
+        replicas: parseJson(getVar("RUNS_ENDPOINTS", env)),
+        redact: parseBoolean(getVar("REDACT", env)),
+        redact_extra_rules: parseJson(getVar("REDACT_EXTRA", env)),
+      }),
+    );
+  } catch {
+    // Malformed env JSON that parses but fails the schema would otherwise crash;
+    // fall back to file config + defaults.
+    return {};
+  }
 };
 
 const getHomeDir = () => process.env.HOME ?? os.homedir();
@@ -124,6 +140,7 @@ export async function getConfig(options?: {
   return ConfigSchema.parse({
     project: "pi-coding-agent",
     enabled: false,
+    redact: true,
     ...globalConfig,
     ...localConfig,
     ...envConfig,

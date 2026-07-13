@@ -1,5 +1,6 @@
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Client, RunTree } from "langsmith";
+import { createSecretAnonymizer } from "langsmith/anonymizer";
 
 import { type Config, getConfig } from "./config.js";
 import { codingAgentMetadata } from "./metadata.js";
@@ -368,8 +369,17 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
   const config = await getConfig();
   const enabled = config.enabled;
 
+  // Redact secrets before upload (on by default). Set on the single Client, so
+  // replica destinations, which reuse it, are covered too.
+  const anonymizer = config.redact
+    ? createSecretAnonymizer(
+        config.redact_extra_rules ? { extraRules: config.redact_extra_rules } : undefined,
+      )
+    : undefined;
+
   const client = enabled
-    ? (options?.client ?? new Client({ apiKey: config.api_key, apiUrl: config.api_url }))
+    ? (options?.client ??
+      new Client({ apiKey: config.api_key, apiUrl: config.api_url, anonymizer }))
     : undefined;
 
   let active: TraceContext | undefined;
