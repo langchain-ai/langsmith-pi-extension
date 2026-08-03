@@ -40,16 +40,16 @@
     "prepublish": "pnpm run build"
   },
   "dependencies": {
-    "langsmith": "^0.6.0",
+    "langsmith": "^0.8.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "^0.6.0",
+    "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
-    "@earendil-works/pi-ai": "^0.78.0",
-    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "@earendil-works/pi-ai": "^0.82.1",
+    "@earendil-works/pi-coding-agent": "^0.82.1",
     "@types/node": "^26.1.2",
-    "oxfmt": "^0.47.0",
+    "oxfmt": "^0.61.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.8"
   },
