@@ -1,9 +1,11 @@
 import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Client, RunTree } from "langsmith";
-
-import { type Config, getConfig } from "./config.js";
+import { getCurrentRunTree } from "langsmith/singletons/traceable";
+import { type Config, ConfigSchema, DEFAULT_PROJECT, getConfig } from "./config.js";
 import { codingAgentMetadata } from "./metadata.js";
 import { isRecord } from "./types.js";
+
+export type { Config } from "./config.js";
 
 const STATUS_KEY = "langsmith";
 
@@ -340,6 +342,7 @@ function createRootRun(
   cwd: string,
   threadId: string | undefined,
   turnNumber: number,
+  parent: RunTree | undefined,
 ): RunTree {
   const config = {
     name: "Pi agent run",
@@ -361,11 +364,40 @@ function createRootRun(
     })),
   };
 
-  return new RunTree(config);
+  return parent?.createChild(config) ?? new RunTree(config);
 }
 
-export default async function (pi: ExtensionAPI, options?: { client?: Client }) {
-  const config = await getConfig();
+export interface LangSmithExtensionOptions {
+  /** LangSmith client to use instead of one built from the resolved config. */
+  client?: Client;
+  /**
+   * Extension config to use instead of discovering one from the environment
+   * and `.pi/langsmith.json` files. Lets a host application that loads the
+   * extension programmatically configure it without touching the process
+   * environment.
+   */
+  config?: Config;
+  /**
+   * When set, each Pi agent run is created as a child of the returned run
+   * instead of starting a new trace. Lets a host application nest Pi runs
+   * under a trace it already manages. Called at the start of each agent run;
+   * returning `undefined` falls back to a new root trace.
+   *
+   * The returned run's client and project are inherited by the Pi run, so
+   * `config.project`, `config.api_key`, `config.api_url` and `client` no longer
+   * affect where these traces land. `config.replicas` still applies.
+   */
+  getCurrentRunTree?: () => RunTree | undefined;
+}
+
+export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOptions) {
+  const config =
+    options?.config != null
+      ? ConfigSchema.parse({
+          ...options.config,
+          project: options.config.project || DEFAULT_PROJECT,
+        })
+      : await getConfig();
   const enabled = config.enabled;
 
   const client = enabled
@@ -411,6 +443,13 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
     }
 
     const threadId = ctx.sessionManager?.getSessionId?.();
+    let parent = undefined;
+    if (typeof options?.getCurrentRunTree === "function") {
+      parent = options.getCurrentRunTree();
+    } else {
+      parent = getCurrentRunTree(true);
+    }
+
     active = {
       root: createRootRun(
         client,
@@ -420,6 +459,7 @@ export default async function (pi: ExtensionAPI, options?: { client?: Client }) 
         ctx.cwd,
         threadId,
         nextUserTurn(threadId),
+        parent,
       ),
       turns: new Map(),
       deferNextLlmToNextTurn: false,

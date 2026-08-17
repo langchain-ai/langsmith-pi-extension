@@ -26,6 +26,8 @@ const ReplicaSchema = z.preprocess(
   }),
 );
 
+export const DEFAULT_PROJECT = "pi-coding-agent";
+
 export const ConfigSchema = z.object({
   // TRACE_TO_LANGSMITH == true
   enabled: z.boolean(),
@@ -122,7 +124,7 @@ export async function getConfig(options?: {
   ]);
 
   return ConfigSchema.parse({
-    project: "pi-coding-agent",
+    project: DEFAULT_PROJECT,
     enabled: false,
     ...globalConfig,
     ...localConfig,
