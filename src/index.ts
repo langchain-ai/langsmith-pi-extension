@@ -331,7 +331,7 @@ async function safeEnd(
   },
 ): Promise<void> {
   await run?.end(params.outputs, params.error, undefined, params.metadata);
-  await run?.patchRun();
+  await run?.patchRun({ excludeInputs: true });
 }
 
 function createRootRun(
