@@ -167,6 +167,31 @@ export const convertToolOutputs = (outputs: { result: unknown }) => {
   return { output: outputs.result };
 };
 
+// These LLM runs are created with RunTree rather than a provider wrapper, so
+// LangSmith needs an explicit hint to select the trajectory message extractor.
+const messageFormatForPayload = (
+  payload: unknown,
+): "responses" | "anthropic" | "langchain" | "completions" | undefined => {
+  if (!isRecord(payload)) return undefined;
+  if (Array.isArray(payload.input) && payload.messages == null) return "responses";
+  if (Array.isArray(payload.contents) && payload.messages == null) return "langchain";
+  if (Array.isArray(payload.messages)) {
+    const isAnthropic =
+      payload.system != null ||
+      payload.max_tokens != null ||
+      payload.messages.some(
+        (message) =>
+          isRecord(message) &&
+          Array.isArray(message.content) &&
+          message.content.some(
+            (part) => isRecord(part) && (part.type === "tool_use" || part.type === "tool_result"),
+          ),
+      );
+    return isAnthropic ? "anthropic" : "completions";
+  }
+  return undefined;
+};
+
 const convertProviderPayload = (payload: unknown) => {
   if (!isRecord(payload)) return { payload };
 
@@ -306,11 +331,15 @@ async function startLlmRun(
   parent: RunTree,
   pending: PendingLlmRun,
 ): Promise<RunTree> {
+  const messageFormat = messageFormatForPayload(pending.payload);
   const llm = parent.createChild({
     name: pending.name,
     run_type: "llm",
     inputs: convertProviderPayload(pending.payload),
-    metadata: pending.metadata,
+    metadata: {
+      ...pending.metadata,
+      ...(messageFormat ? { ls_message_format: messageFormat } : {}),
+    },
   });
 
   trace.currentLlm = llm;
