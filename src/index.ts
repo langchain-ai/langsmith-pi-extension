@@ -1,4 +1,8 @@
-import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  type ContextEvent,
+  type ExtensionAPI,
+  VERSION as PI_RUNTIME_VERSION,
+} from "@earendil-works/pi-coding-agent";
 import { Client, RunTree } from "langsmith";
 import { getCurrentRunTree } from "langsmith/singletons/traceable";
 import { type Config, ConfigSchema, DEFAULT_PROJECT, getConfig } from "./config.js";
@@ -8,6 +12,14 @@ import { isRecord } from "./types.js";
 export type { Config } from "./config.js";
 
 const STATUS_KEY = "langsmith";
+
+// Pi 0.80.4 added `agent_settled`.
+const PI_EMITS_AGENT_SETTLED = (() => {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(PI_RUNTIME_VERSION);
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return major > 0 || minor > 80 || (minor === 80 && patch >= 4);
+})();
 
 interface PendingLlmRun {
   name: string;
@@ -25,6 +37,7 @@ interface TraceContext {
   deferNextLlmToNextTurn: boolean;
 
   tools: Map<string, RunTree>;
+  loopResult?: { outputs: Record<string, unknown>; error?: string };
 }
 
 type AgentMessage = ContextEvent["messages"][number];
@@ -469,6 +482,23 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
     ctx.ui.setStatus(STATUS_KEY, "LangSmith: tracing run");
   });
 
+  pi.on("session_compact", async (event) => {
+    if (!active) return;
+    const run = active.root.createChild({
+      name: `Context Compaction (${event.reason})`,
+      run_type: "chain",
+      inputs: { reason: event.reason, willRetry: event.willRetry },
+      metadata: { ls_agent_type: "compaction" },
+    });
+    await safePost(run);
+    await safeEnd(run, {
+      outputs: {
+        summary: event.compactionEntry.summary,
+        tokensBefore: event.compactionEntry.tokensBefore,
+      },
+    });
+  });
+
   pi.on("turn_start", async (event, ctx) => {
     if (!active) return;
     const turn = active.root.createChild({
@@ -601,6 +631,9 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
     for (const turn of active.turns.values()) {
       await safeEnd(turn, { outputs: { incomplete: true } });
     }
+    active.currentLlm = undefined;
+    active.currentTurn = undefined;
+    active.turns.clear();
 
     const lastMessage = event.messages.at(-1);
     let error: string | undefined = undefined;
@@ -612,11 +645,23 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
       }
     }
 
-    await safeEnd(active.root, {
+    active.loopResult = {
       outputs: { messages: convertMessages(event.messages), context_usage: ctx.getContextUsage() },
       error,
-    });
+    };
+    // Pi may compact and re-enter the loop without `before_agent_start`; the
+    // next loop joins this root and `agent_settled` ends it.
+    if (PI_EMITS_AGENT_SETTLED) return;
 
+    await safeEnd(active.root, active.loopResult);
+
+    active = undefined;
+    ctx.ui.setStatus(STATUS_KEY, "LangSmith: traced");
+  });
+
+  pi.on("agent_settled", async (_event, ctx) => {
+    if (!active) return;
+    await safeEnd(active.root, active.loopResult ?? { outputs: { incomplete: true } });
     active = undefined;
     ctx.ui.setStatus(STATUS_KEY, "LangSmith: traced");
   });
@@ -631,10 +676,13 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
       await safeEnd(active.currentLlm, {
         error: "Pi session shut down before LLM message finalized",
       });
-      await safeEnd(active.root, {
-        outputs: { shutdown: true },
-        error: "Pi session shut down before run completed",
-      });
+      await safeEnd(
+        active.root,
+        active.loopResult ?? {
+          outputs: { shutdown: true },
+          error: "Pi session shut down before run completed",
+        },
+      );
 
       active = undefined;
     }
