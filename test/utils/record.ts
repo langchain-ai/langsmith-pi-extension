@@ -35,6 +35,7 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_agent_start", createRecord("before_agent_start"));
   pi.on("agent_start", createRecord("agent_start"));
   pi.on("agent_end", createRecord("agent_end"));
+  pi.on("agent_settled", createRecord("agent_settled"));
   pi.on("turn_start", createRecord("turn_start"));
   pi.on("turn_end", createRecord("turn_end"));
   pi.on("message_start", createRecord("message_start"));
