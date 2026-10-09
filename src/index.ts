@@ -418,6 +418,9 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
     : undefined;
 
   let active: TraceContext | undefined;
+  // `agent_settled` events still owed for runs already ended by the next
+  // `before_agent_start` (see the `agent_settled` handler).
+  let staleSettles = 0;
 
   // pi exposes no user-turn counter; keep a 1-based one keyed by session id.
   const userTurnByThread = new Map<string, number>();
@@ -448,8 +451,17 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
 
   if (!enabled || !client) return;
   pi.on("before_agent_start", async (event, ctx) => {
-    if (active) {
-      await safeEnd(active.root, {
+    const previous = active;
+    active = undefined;
+    if (previous?.loopResult) {
+      // The previous run's loop already ended, but its `agent_settled` has not
+      // reached us: on Pi <0.87.0 an extension's `agent_settled` handler can
+      // start this prompt before ours runs. End it with its real result and
+      // skip that settle when it arrives, so it doesn't end this run.
+      staleSettles++;
+      await safeEnd(previous.root, previous.loopResult);
+    } else if (previous) {
+      await safeEnd(previous.root, {
         outputs: { interruptedByNextRun: true },
         error: "Trace replaced by a new Pi run",
       });
@@ -660,9 +672,16 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
-    if (!active) return;
-    await safeEnd(active.root, active.loopResult ?? { outputs: { incomplete: true } });
+    if (staleSettles > 0) {
+      // Late settle for a run `before_agent_start` already ended.
+      staleSettles--;
+      return;
+    }
+    const settled = active;
+    if (!settled) return;
+    // Clear before awaiting so a run started meanwhile isn't dropped.
     active = undefined;
+    await safeEnd(settled.root, settled.loopResult ?? { outputs: { incomplete: true } });
     ctx.ui.setStatus(STATUS_KEY, "LangSmith: traced");
   });
 
@@ -686,6 +705,7 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
 
       active = undefined;
     }
+    staleSettles = 0;
     await client.awaitPendingTraceBatches();
     ctx.ui.setStatus(STATUS_KEY, undefined);
   });
