@@ -1,5 +1,11 @@
 # @langchain/langsmith-pi-extension
 
+## 0.2.1
+
+### Patch Changes
+
+- [#42](https://github.com/langchain-ai/langsmith-pi-extension/pull/42) [`943263e`](https://github.com/langchain-ai/langsmith-pi-extension/commit/943263e8b7419fcefcd2e6ac8faaf6f85e230176) Thanks [@cassfij](https://github.com/cassfij)! - On Pi 0.80.4 and later, keep the trace open until `agent_settled`, so agent loops Pi restarts without `before_agent_start` (such as the retry after an overflow compaction) are no longer dropped. Compaction is recorded as a `Context Compaction (<reason>)` child run. Behavior on earlier Pi is unchanged.
+
 ## 0.2.0
 
 ### Minor Changes
