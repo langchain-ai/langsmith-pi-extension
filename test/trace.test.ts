@@ -7,6 +7,32 @@ import { asTree, getAssumedTreeFromCalls } from "./utils/tree";
 
 vi.stubEnv("TRACE_TO_LANGSMITH", "true");
 
+it.each([
+  ["oai-responses-tool-calls.jsonl", "openai", "responses"],
+  ["anthropic-tool-calls.jsonl", "anthropic", "anthropic"],
+  ["gemini-tool-calls.jsonl", "google", "langchain"],
+])(
+  "marks %s LLM runs with their trajectory message format",
+  async (recording, provider, format) => {
+    const { client, callSpy } = mockClient();
+    await replayExtension(
+      (pi) => extension(pi, { client }),
+      await fs.promises.readFile(new URL(`./recordings/${recording}`, import.meta.url), "utf-8"),
+    );
+    await client.awaitPendingTraceBatches();
+    const tree = await getAssumedTreeFromCalls(callSpy.mock.calls, client);
+    const llms = Object.entries(tree.data).filter(([name]) => name.startsWith(`${provider}:`));
+
+    expect(llms.length).toBeGreaterThan(0);
+    for (const [, run] of llms) {
+      expect(run).toMatchObject({
+        run_type: "llm",
+        extra: { metadata: { ls_message_format: format } },
+      });
+    }
+  },
+);
+
 it("openai responses", async () => {
   const { client, callSpy } = mockClient();
 
