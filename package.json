@@ -45,7 +45,7 @@
     "prepublish": "pnpm run build"
   },
   "dependencies": {
-    "langsmith": "^0.10.5",
+    "langsmith": "^0.11.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -54,7 +54,7 @@
     "@earendil-works/pi-ai": "^0.87.1",
     "@earendil-works/pi-coding-agent": "^0.87.1",
     "@types/node": "^26.1.2",
-    "oxfmt": "^0.70.0",
+    "oxfmt": "^0.75.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   },
