@@ -475,12 +475,27 @@ export default async function (pi: ExtensionAPI, options?: LangSmithExtensionOpt
       parent = getCurrentRunTree(true);
     }
 
+    const content = event.messageType === "custom" ? event.message.content : event.prompt;
+    const prompt =
+      typeof content === "string"
+        ? content
+        : content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+    const imageCount =
+      event.messageType === "custom"
+        ? typeof content === "string"
+          ? 0
+          : content.filter((part) => part.type === "image").length
+        : (event.images?.length ?? 0);
+
     active = {
       root: createRootRun(
         client,
         config,
-        event.prompt,
-        event.images?.length ?? 0,
+        prompt,
+        imageCount,
         ctx.cwd,
         threadId,
         nextUserTurn(threadId),
