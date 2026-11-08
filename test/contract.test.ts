@@ -12,7 +12,10 @@ const THREAD_ID = "sess_contract_test_123";
 
 // Drive one turn (root -> turn -> llm + tool) with a ctx that exposes
 // sessionManager, so we can assert the full contract on a mocked trace.
-async function driveOneTurn(init: (api: ExtensionAPI) => Promise<void>) {
+async function driveOneTurn(
+  init: (api: ExtensionAPI) => Promise<void>,
+  startEvent: Record<string, unknown> = { prompt: "hello", images: [] },
+) {
   const handlers: Record<
     string,
     Array<(arg: unknown, ctx: ExtensionContext) => Promise<void>>
@@ -38,7 +41,7 @@ async function driveOneTurn(init: (api: ExtensionAPI) => Promise<void>) {
     for (const handler of handlers[name] ?? []) await handler(arg, ctx);
   };
 
-  await fire("before_agent_start", { prompt: "hello", images: [] });
+  await fire("before_agent_start", startEvent);
   await fire("turn_start", { turnIndex: 0, timestamp: 1 });
   await fire("before_provider_request", {
     payload: { messages: [{ role: "user", content: "hi" }] },
@@ -151,6 +154,51 @@ it("emits the coding-agent-v1 contract on every run type", async () => {
 
   // ── ls_tool_name omitted: pi's run name already IS the native tool name.
   expect(tool).not.toHaveProperty("ls_tool_name");
+});
+
+it.each([
+  {
+    name: "legacy user prompt",
+    event: { prompt: "hello", images: [] },
+    inputs: { prompt: "hello", imageCount: 0 },
+  },
+  {
+    name: "user prompt with an image",
+    event: {
+      messageType: "user",
+      prompt: "describe this",
+      images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+    },
+    inputs: { prompt: "describe this", imageCount: 1 },
+  },
+  {
+    name: "custom text message",
+    event: { messageType: "custom", message: { content: "continue" } },
+    inputs: { prompt: "continue", imageCount: 0 },
+  },
+  {
+    name: "custom multimodal message",
+    event: {
+      messageType: "custom",
+      message: {
+        content: [
+          { type: "text", text: "first" },
+          { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+          { type: "text", text: "second" },
+        ],
+      },
+    },
+    inputs: { prompt: "first\nsecond", imageCount: 1 },
+  },
+])("traces inputs for a $name", async ({ event, inputs }) => {
+  const { client, callSpy } = mockClient();
+
+  await driveOneTurn((pi) => extension(pi, { client }), event);
+  await client.awaitPendingTraceBatches();
+
+  const tree = await getAssumedTreeFromCalls(callSpy.mock.calls, client);
+  const root = Object.entries(tree.data).find(([name]) => name.startsWith("Pi agent run:"));
+  expect(root?.[1]).toMatchObject({ inputs });
 });
 
 it("increments turn_number per user prompt within a thread", async () => {
