@@ -1,5 +1,11 @@
 # @langchain/langsmith-pi-extension
 
+## 0.2.2
+
+### Patch Changes
+
+- [#49](https://github.com/langchain-ai/langsmith-pi-extension/pull/49) [`b3a9eee`](https://github.com/langchain-ai/langsmith-pi-extension/commit/b3a9eee224dd922ba46bdbb83729f208c1b2dad5) Thanks [@dependabot](https://github.com/apps/dependabot)! - Support Pi 1.x custom-message agent starts while preserving prompt text and image counts in traces.
+
 ## 0.2.1
 
 ### Patch Changes
